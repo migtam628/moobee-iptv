@@ -1,0 +1,12 @@
+# Opt-in: host-network Caddy, bridge-network API published on host loopback.
+# Start with: docker compose -f compose.yaml -f compose.hostnet.yaml up -d --build
+# Do not publish port 8000 on any public address.
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"
+  caddy:
+    network_mode: host
+    ports: !reset []
+    environment:
+      CADDY_UPSTREAM: 127.0.0.1:8000

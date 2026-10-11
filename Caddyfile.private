@@ -1,0 +1,33 @@
+# Opt-in private admin access. Never enable before Tailscale connectivity is verified.
+# A Tailscale client must reach the VPS using its Tailscale IP, not the public IP.
+{$DOMAIN} {
+    encode zstd gzip
+    @admin path /admin /admin/*
+    respond @admin 404
+    reverse_proxy {$CADDY_UPSTREAM:api:8000}
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+    }
+}
+
+{$ADMIN_DOMAIN} {
+    encode zstd gzip
+    @vpn_admin {
+        remote_ip 100.64.0.0/10
+        path /admin /admin/*
+    }
+    handle @vpn_admin {
+        reverse_proxy {$CADDY_UPSTREAM:api:8000}
+    }
+    handle {
+        respond 403
+    }
+    header {
+        Cache-Control "no-store"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+    }
+}
