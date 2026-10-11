@@ -1,6 +1,5 @@
-# Opt-in VPN-only administrator routing. Use only after verifying Tailscale works.
-# For a remote Tailscale client, use split DNS or a local hostname override to
-# resolve admin.moobee.lol to the VPS Tailscale IPv4 address.
+# Opt-in private admin access. Never enable before Tailscale connectivity is verified.
+# A Tailscale client must reach the VPS using its Tailscale IP, not the public IP.
 {$DOMAIN} {
     encode zstd gzip
     @admin path /admin /admin/*
@@ -15,17 +14,12 @@
 
 {$ADMIN_DOMAIN} {
     encode zstd gzip
-    @allowed remote_ip 100.64.0.0/10
-    handle @allowed {
-        @root path /
-        redir @root /admin 302
-        @admin path /admin /admin/*
-        handle @admin {
-            reverse_proxy api:8000
-        }
-        handle {
-            respond 404
-        }
+    @vpn_admin {
+        remote_ip 100.64.0.0/10
+        path /admin /admin/*
+    }
+    handle @vpn_admin {
+        reverse_proxy api:8000
     }
     handle {
         respond 403
