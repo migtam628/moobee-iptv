@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL}
+    volumes:
+      - ./data:/data
+      - ./media:/media:ro
+    expose:
+      - '8000'
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+volumes:
+  caddy_data:
+  caddy_config:
