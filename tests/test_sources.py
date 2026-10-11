@@ -2,7 +2,8 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'app'))
 import pytest
-import main  # Initialize application routes before importing the extension.\nfrom source_management import parse_local_m3u
+import main  # Initialize application routes before importing the extension.
+from source_management import parse_local_m3u
 
 def test_local_import_parser():
     payload='#EXTM3U\n#EXTINF:-1 group-title="Personal" tvg-name="Test",Test\nmoobee-local://channel1\n'
