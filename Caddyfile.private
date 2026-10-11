@@ -4,7 +4,7 @@
     encode zstd gzip
     @admin path /admin /admin/*
     respond @admin 404
-    reverse_proxy api:8000
+    reverse_proxy {$CADDY_UPSTREAM:api:8000}
     header {
         X-Content-Type-Options nosniff
         Referrer-Policy no-referrer
@@ -19,7 +19,7 @@
         path /admin /admin/*
     }
     handle @vpn_admin {
-        reverse_proxy api:8000
+        reverse_proxy {$CADDY_UPSTREAM:api:8000}
     }
     handle {
         respond 403
