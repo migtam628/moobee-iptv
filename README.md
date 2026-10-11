@@ -173,3 +173,48 @@ Keep a tested database backup before every upgrade. Git version control does not
 - Channel folders must already contain supported local HLS media; creating a channel record does not ingest or transcode content.
 - Activity records administrative mutations only; they are not active viewing sessions or detailed analytics.
 - These changes require testing on the real VPS; branch commits alone do not mean production deployment.
+
+## v0.3 security and reliability candidate (not automatically deployed)
+
+This branch adds a GitHub Actions syntax/API/Docker build pipeline and SQLite online-backup scripts. **Do not merge until CI is green and the backup/restore procedure has been exercised on the VPS.** This is a reliability baseline, not a production-grade identity/rate-limiting solution.
+
+### Run tests
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt pytest httpx
+pytest -q
+docker compose config --quiet
+```
+
+### Manual backup and integrity test (VPS)
+
+```bash
+cd /root/moobee-iptv
+bash scripts/backup-db.sh
+LATEST=$(find /root/moobee-backups -maxdepth 1 -name 'moobee-*.sqlite3' -type f | sort | tail -1)
+bash scripts/verify-backup.sh "$LATEST"
+```
+
+Backups are created with a SQLite online backup, copied outside the Git checkout, checked with PRAGMA integrity_check, and kept for 14 days. Files are not encrypted: keep directory access restricted, encrypt an off-VPS copy, and follow a retention policy appropriate for your use. Test a full restoration in an **isolated** test instance before depending on the backups. This script is not a scheduler by itself.
+
+### Schedule backup daily at 03:15 UTC
+
+Use root's cron (adjust to your desired time zone). Be careful not to overwrite existing root crontab:
+
+```bash
+crontab -l > /tmp/moobee-existing-cron 2>/dev/null || true
+printf '15 3 * * * cd /root/moobee-iptv && /bin/bash scripts/backup-db.sh >> /var/log/moobee-backup.log 2>&1\n' >> /tmp/moobee-existing-cron
+crontab /tmp/moobee-existing-cron
+rm /tmp/moobee-existing-cron
+```
+
+### Restore rehearsal (do not overwrite live data)
+
+Use a separate test folder and read-only SQLite inspection first. To restore production after an incident, stop the API, make a separate copy of the broken database, copy the selected backup into `data/server.sqlite3`, fix ownership to UID 10001, and start the API. Do not execute a restore against a running production database.
+
+### Secure admin access
+
+Admin HTTP Basic credentials protect against unauthenticated access but do **not** implement login rate limits. For private operation, configure WireGuard/Tailscale and a VPS firewall or Caddy source-IP restrictions to limit `admin.moobee.lol` access to trusted devices. Do not advertise VPN protection as enabled until tested. Caddy is internet-facing by default on the current branch. Never expose internal port 8000. Additional API authentication throttling, secret rotation and better session management remain planned.
+
