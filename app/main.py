@@ -120,3 +120,6 @@ def unsupported_ts(username:str,password:str,stream_id:int):
 # Optional private admin panel (Basic auth enabled only with a strong secret).
 from admin_web import router as admin_router
 app.include_router(admin_router)
+
+from source_management import router as source_management_router
+app.include_router(source_management_router)
