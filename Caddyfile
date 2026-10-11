@@ -1,8 +1,28 @@
 {$DOMAIN} {
     encode zstd gzip
-    @health path /healthz
+    @admin path /admin /admin/*
+    respond @admin 404
     reverse_proxy api:8000
     header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        X-Frame-Options DENY
+    }
+}
+
+{$ADMIN_DOMAIN} {
+    encode zstd gzip
+    @root path /
+    redir @root /admin 302
+    @admin path /admin /admin/*
+    handle @admin {
+        reverse_proxy api:8000
+    }
+    handle {
+        respond 404
+    }
+    header {
+        Cache-Control "no-store"
         X-Content-Type-Options nosniff
         Referrer-Policy no-referrer
         X-Frame-Options DENY

@@ -3,7 +3,7 @@ WORKDIR /srv
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home appuser
 COPY app ./app
-RUN mkdir /data /media && chown -R 10001:10001 /data /media
+RUN mkdir -p /data /media && chown -R 10001:10001 /data /media
 USER 10001
 WORKDIR /srv/app
 EXPOSE 8000

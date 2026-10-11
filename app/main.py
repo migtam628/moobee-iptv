@@ -116,3 +116,7 @@ def hls(username:str,password:str,stream_id:int,segment:str):
 def unsupported_ts(username:str,password:str,stream_id:int):
     auth(username,password)
     raise HTTPException(501,'Raw MPEG-TS output unavailable; select HLS/m3u8')
+
+# Optional private admin panel (Basic auth enabled only with a strong secret).
+from admin_web import router as admin_router
+app.include_router(admin_router)

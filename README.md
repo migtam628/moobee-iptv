@@ -114,3 +114,62 @@ data/                          SQLite state, excluded from Git
 ## Licensing
 
 No open-source license has been selected yet. See [LICENSE-NOTICE.md](LICENSE-NOTICE.md).
+
+## MooBee IPTV v0.2 — Private administration
+
+v0.2 adds an authenticated browser interface at **https://admin.moobee.lol/admin** with account creation/enable/disable, channel creation/editing/deletion, counts, and recent audit entries. The streaming hostname remains **https://tv.moobee.lol**. No real-time viewer metrics, EPG import, or external ingest are implemented yet.
+
+**Important:** Do not deploy without setting an admin password (minimum 20 characters). The admin subdomain is publicly reachable unless you restrict it at your VPS firewall, VPN, or proxy. HTTP Basic authentication is suitable for initial private use over HTTPS, not a complete production identity solution. Admin credentials are kept in the local untracked `.env` file. The server compares them using constant-time comparison. If no password is configured, admin routes return HTTP 503. The existing API still works.
+
+### Upgrade existing server
+
+On the VPS, first back up `data/server.sqlite3` safely (stop the API or use SQLite's backup API) and preserve your local `.env`. To deploy the feature branch for testing:
+
+```bash
+cd /root/moobee-iptv
+git status
+git fetch origin
+git switch -c test-admin-v0.2 origin/feat/admin-dashboard-v0.2
+```
+
+If `git status` shows your previous local Dockerfile fix, either commit it first or stash it before switching. Do **not** discard changes to `.env`, `data/`, or `media/`. Ensure `admin.moobee.lol` points to your VPS. Configure locally:
+
+```bash
+cat >> .env <<'EOF'
+ADMIN_DOMAIN=admin.moobee.lol
+ADMIN_USERNAME=admin
+EOF
+# Generate a random password on your VPS; save it in a password manager.
+ADMIN_SECRET="$(openssl rand -hex 24)"
+printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_SECRET" >> .env
+unset ADMIN_SECRET
+chmod 600 .env
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+curl -i https://tv.moobee.lol/healthz
+curl -I https://admin.moobee.lol/admin
+```
+
+The last command should return HTTP 401 with a Basic authentication challenge. Open `https://admin.moobee.lol/admin` in your browser and enter your configured admin credentials. A 503 indicates an unset or too-short admin password. Use `docker compose logs --tail=100 api caddy` for errors.
+
+### Rollback
+
+Because v0.2 adds only a separate audit table and does not delete existing account/channel data, you can return to the previous application branch if needed:
+
+```bash
+git switch main
+docker compose up -d --build
+```
+
+Keep a tested database backup before every upgrade. Git version control does not back up SQLite data or media.
+
+### Constraints and security
+
+- Admin API and UI exist under `/admin` and `/admin/api/*` on the admin hostname. Caddy blocks those paths on the TV hostname.
+- Keep admin access private via WireGuard/Tailscale or a reverse proxy access policy where possible.
+- Do not paste the admin password or generated subscriber passwords into screenshots, shell transcripts, or tickets.
+- Subscriber passwords are shown once on creation; they are stored as salted scrypt hashes. The current Xtream-compatible playback URLs still expose subscriber credentials to the client and possibly its logs.
+- Channel folders must already contain supported local HLS media; creating a channel record does not ingest or transcode content.
+- Activity records administrative mutations only; they are not active viewing sessions or detailed analytics.
+- These changes require testing on the real VPS; branch commits alone do not mean production deployment.
