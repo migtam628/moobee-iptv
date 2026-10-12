@@ -114,8 +114,9 @@ def authenticated_vod(username, password, kind, item_id):
 def manifest(username, password, kind, item_id):
     import main
     media_folder = authenticated_vod(username,password,kind,item_id)
-    file = media_folder / "index.m3u8"
-    if not file.is_file(): raise HTTPException(404,"VOD HLS playlist unavailable")
+    file = (media_folder / "index.m3u8").resolve()
+    if not file.is_relative_to(media_folder) or not file.is_file():
+        raise HTTPException(404,"VOD HLS playlist unavailable")
     if file.stat().st_size > 256_000:
         raise HTTPException(422,"HLS playlist too large")
     lines=[]
