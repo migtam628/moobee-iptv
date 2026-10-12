@@ -2,6 +2,17 @@
 
 **Status:** Design and readiness plan only. No integration is enabled by this document, no new container is deployed, and the production Tailscale/host-network configuration is unchanged.
 
+## Approved project scope
+
+This platform uses **exactly three active repositories**:
+
+1. **[moobee-iptv](https://github.com/migtam628/moobee-iptv)** — central backend: Xtream subscriber authentication, Live TV, EPG, catalog, and subscriber access controls.
+2. **[StreamBoss](https://github.com/migtam628/StreamBoss)** — the **only** IPTV player/client targeted for integration and device testing.
+3. **[moobee-stream](https://github.com/migtam628/moobee-stream)** — media ingest, FFmpeg transcoding, storage, and HLS streaming services.
+
+**Out of scope:** [iptv-player](https://github.com/migtam628/iptv-player) and [vidplus-movie-player](https://github.com/migtam628/vidplus-movie-player) are separate optional projects. Do not create integrations, adapters, builds, release blockers, device test plans, or dependencies for them as part of the MooBee platform. They may remain in GitHub without being deleted or modified.
+
+
 ## Current verified baseline
 
 - [MooBee IPTV](https://github.com/migtam628/moobee-iptv) `main` now includes v0.7 local VOD, v0.6 XMLTV, subscriber credentials, SQLite catalog and authenticated local HLS.
@@ -25,7 +36,7 @@ These are **code review findings** from the repository, not evidence that any in
 ## Proposed trust boundaries (not deployed)
 
 ```text
-                     StreamBoss / IPTV Player / other Xtream clients
+                     StreamBoss (sole supported player)
                                        |
                                      HTTPS
                                        |
@@ -77,7 +88,7 @@ These are **code review findings** from the repository, not evidence that any in
 ### Gate C — Playback compatibility
 
 - Implement a properly authenticated playback gateway that rewrites **master, rendition and segment** URIs safely. Reject directory traversal, remote URI injection, localhost/metadata URLs, redirects and unexpected media types.
-- Ensure Stream signing, entitlement, expiration and account disable/revocation semantics still work with browser HLS clients and StreamBoss.
+- Ensure Stream signing, entitlement, expiration and account disable/revocation semantics still work with StreamBoss on the intended supported devices.
 - Cover long episodes and token refresh/retry. Track capacity: reverse proxy streaming overhead, bandwidth, CPU/GPU workers and disk.
 - Keep the current `/movie/...` and `/series/...` local-HLS paths working while rolling out external-backed catalog items separately.
 - Never expose admin API keys or signing keys through response bodies, URLs, client code, response headers or troubleshooting logs.
