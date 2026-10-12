@@ -16,7 +16,7 @@
 <div class="tablewrap"><table><thead><tr><th>Type</th><th>ID</th><th>Title</th><th>Media / series</th><th>Action</th></tr></thead><tbody id="vod-body"></tbody></table></div>
 </section><section class="panel" id="stream-integration-panel">
 <div class="panelhead"><h2>MooBee Stream · Private Catalog Adapter</h2><button class="secondary" id="stream-reload">Refresh mappings</button></div>
-<p class="muted">Off by default. This feature previews metadata from an administrator-configured private MooBee Stream service and maps IDs to existing VOD items. No videos are imported or downloaded and no remote playback is enabled. Local movie and episode playback remains unchanged.</p>
+<p class="muted">Off by default. This feature previews metadata from an administrator-configured private MooBee Stream service and maps IDs to existing VOD items. No videos are imported or downloaded. Private playback requires the separate server-side playback flag and an explicitly enabled ready UUID mapping; both are off by default.</p>
 <p id="stream-status" class="muted" role="status">Checking connector configuration…</p>
 <form id="stream-preview-form"><div><label for="stream-max-pages">Maximum catalog pages (100 records/page)</label><input id="stream-max-pages" type="number" min="1" max="10" value="3" required></div><div><button type="submit" id="stream-preview-btn">Preview remote catalog (read only)</button></div></form>
 <div id="stream-preview-summary" class="muted" role="status">No preview requested</div>
@@ -72,7 +72,7 @@ async function streamLoad(){
  try{
    const [state,local,maps]=await Promise.all([api("integrations/moobee-stream/status"),api("vod"),api("integrations/moobee-stream/mappings")]);
    streamVod=local;streamChooseTargets();
-   $("stream-status").textContent="Connector: "+(state.enabled?"enabled":"disabled")+" · Configuration: "+(state.configured?"ready":"not ready")+" · Playback integration: NOT AVAILABLE";
+   $("stream-status").textContent="Connector: "+(state.enabled?"enabled":"disabled")+" · Configuration: "+(state.configured?"ready":"not ready")+" · Playback integration: "+(state.playback_supported?"ENABLED FOR MAPPED ITEMS":"DISABLED")";
    $("stream-preview-btn").disabled=!state.configured;
    $("stream-save-map").disabled=!state.configured;
    const body=$("stream-mappings-body");body.replaceChildren();
@@ -95,7 +95,7 @@ $("stream-mapping-form").onsubmit=async e=>{
  if(!id||!videoId)return notify("Choose an existing local item and a previewed Stream video",true);
  try{
    const result=await api("integrations/moobee-stream/mappings/"+kind+"/"+id,{method:"PUT",body:JSON.stringify({video_id:videoId,enabled:$("stream-map-enabled").checked})});
-   notify("Saved mapping for "+result.kind+" #"+result.item_id+". Playback remains local-only.");
+   notify("Saved mapping for "+result.kind+" #"+result.item_id+". Playback requires the separate gateway feature flag.");
    await streamLoad();
  }catch(err){notify(err.message,true)}
 };

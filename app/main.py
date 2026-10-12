@@ -152,3 +152,7 @@ app.include_router(admin_vod_router)
 # Disabled-by-default private MooBee Stream catalog adapter. No subscriber routes.
 from admin_stream_integration import router as stream_catalog_admin_router
 app.include_router(stream_catalog_admin_router)
+
+# Feature-flagged StreamBoss remote HLS gateway; existing local VOD is the default.
+from stream_gateway import router as private_hls_router
+app.include_router(private_hls_router)

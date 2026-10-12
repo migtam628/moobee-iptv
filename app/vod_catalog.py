@@ -122,6 +122,12 @@ def authenticated_vod(username, password, kind, item_id):
 
 def manifest(username, password, kind, item_id):
     import main
+    # Preserve all local behavior until BOTH operator flags are explicitly enabled.
+    from stream_gateway import gateway_enabled, mapped_uuid, manifest as remote_manifest
+    if gateway_enabled():
+        main.auth(username, password)
+        if mapped_uuid(kind, item_id) is not None:
+            return remote_manifest(username, password, kind, item_id)
     media_folder = authenticated_vod(username,password,kind,item_id)
     file = (media_folder / "index.m3u8").resolve()
     if not file.is_relative_to(media_folder) or not file.is_file():
