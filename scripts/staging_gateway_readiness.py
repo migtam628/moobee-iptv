@@ -68,7 +68,7 @@ def first_path(playlist, user, password, *, rendition):
     require(user not in s and password not in s,
             "subscriber credentials leaked in media playlist")
     # Bearer tokens are credentials too; validate paths without logging them.
-    token_pattern = re.compile(r"[A-Za-z0-9_-]{80,700}\\.[A-Za-z0-9_-]{43}")
+    token_pattern = re.compile(r"[A-Za-z0-9_-]{80,700}\.[A-Za-z0-9_-]{43}")
     for line in lines:
         url = urlsplit(line)
         require(url.scheme == "http" and url.netloc == urlsplit(BASE).netloc
@@ -76,10 +76,10 @@ def first_path(playlist, user, password, *, rendition):
                 "unexpected media origin")
         if rendition:
             path_pattern = (r"/stream-vod-t/" + token_pattern.pattern
-                            + r"/(?:movie/101|episode/301)/[A-Za-z0-9_-]{1,40}/index\\.m3u8")
+                            + r"/(?:movie/101|episode/301)/[A-Za-z0-9_-]{1,40}/index\.m3u8")
         else:
             path_pattern = (r"/stream-vod-t/" + token_pattern.pattern
-                            + r"/(?:movie/101|episode/301)/[A-Za-z0-9_-]{1,40}/segment_[0-9]{5}\\.ts")
+                            + r"/(?:movie/101|episode/301)/[A-Za-z0-9_-]{1,40}/segment_[0-9]{5}\.ts")
         require(re.fullmatch(path_pattern, url.path) is not None,
                 "unexpected signed-token media path")
     return lines[0]
