@@ -1,12 +1,13 @@
 """Admin-only, disabled-by-default MooBee Stream catalog adapter.
 
-Only a fixed administrator-configured private IPv4 origin is accepted.
+Only fixed private IPv4 or an explicitly pinned Tailscale HTTPS hostname is accepted.
 Never fetches HLS, issues playback URLs, or modifies the live subscriber API.
 """
 import ipaddress
 import json
 import math
 import os
+import re
 import time
 import uuid
 from urllib.parse import urlsplit
@@ -27,8 +28,18 @@ def is_enabled():
     return os.environ.get("MOOBEE_STREAM_ENABLED", "false").strip().lower() == "true"
 
 
+TAILSCALE_HOST_PATTERN = re.compile(
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.ts\.net\Z"
+)
+
+
 def fixed_private_origin(raw):
-    """Reject DNS, redirects, authority tricks, unexpected paths and insecure remote hops."""
+    """Restrict upstream to private IPv4 or an exact opt-in Tailscale HTTPS name.
+
+    HTTPS name is validated by the regular TLS stack at request time. The
+    operator must configure the exact expected hostname; arbitrary DNS names
+    and public origins are never accepted.
+    """
     if not isinstance(raw, str) or not raw or raw != raw.strip() or any(c in raw for c in "\\%@"):
         raise ValueError("Invalid private upstream origin")
     try:
@@ -37,12 +48,26 @@ def fixed_private_origin(raw):
             raise ValueError("Invalid scheme")
         if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
             raise ValueError("Origin must have no credentials, path or query")
-        address = ipaddress.IPv4Address(parts.hostname)
         port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
         if not 1 <= port <= 65535:
             raise ValueError("Invalid port")
     except (ValueError, TypeError) as exc:
         raise ValueError("Invalid private upstream origin") from exc
+
+    try:
+        address = ipaddress.IPv4Address(parts.hostname)
+    except ipaddress.AddressValueError:
+        # No DNS-based configuration is permitted unless the operator opts in
+        # to one exact Tailscale Serve hostname on HTTPS port 443.
+        allowed = os.environ.get("MOOBEE_STREAM_TAILSCALE_HOSTNAME", "")
+        if not (TAILSCALE_HOST_PATTERN.fullmatch(allowed)
+                and parts.hostname == allowed
+                and parts.scheme == "https"
+                and port == 443
+                and parts.netloc in (allowed, allowed + ":443")):
+            raise ValueError("Untrusted private upstream hostname")
+        return f"https://{allowed}:443"
+
     if address != ipaddress.IPv4Address("127.0.0.1") and not any(
         address in network for network in PRIVATE_RANGES
     ):
