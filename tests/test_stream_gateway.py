@@ -2,6 +2,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 import pytest
@@ -11,13 +12,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "app"))
 import main
 import stream_catalog
 import stream_gateway
+import hls_access_tokens
 
 ADMIN = ("admin", "this-is-a-private-test-password-12345")
 VIEWER = {"username": "streamviewer", "password": "viewer-password-12345678"}
 MOVIE = "00000000-0000-4000-8000-000000000101"
 EPISODE = "00000000-0000-4000-8000-000000000301"
 KEY = "a-dedicated-example-service-key-over-32-chars"
-TOKEN = "AbcdEfghijklmnopqrstuv"
+SECRET = "unrelated-staging-token-signature-secret-0123456789"
+UPSTREAM_TOKEN = "AbcdEfghijklmnopqrstuv"
 MASTER = (
     "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-INDEPENDENT-SEGMENTS\n"
     "#EXT-X-STREAM-INF:BANDWIDTH=3200000\n720p/index.m3u8\n"
@@ -39,10 +42,10 @@ def stage(monkeypatch):
         monkeypatch.setattr(main, "MEDIA", root / "media")
         monkeypatch.setenv("ADMIN_USERNAME", ADMIN[0])
         monkeypatch.setenv("ADMIN_PASSWORD", ADMIN[1])
-        monkeypatch.delenv("MOOBEE_STREAM_ENABLED", raising=False)
-        monkeypatch.delenv("MOOBEE_STREAM_PLAYBACK_ENABLED", raising=False)
-        monkeypatch.delenv("MOOBEE_STREAM_SERVICE_KEY", raising=False)
-        monkeypatch.delenv("MOOBEE_STREAM_BASE_URL", raising=False)
+        for name in ("MOOBEE_STREAM_ENABLED", "MOOBEE_STREAM_PLAYBACK_ENABLED",
+                     "MOOBEE_STREAM_SERVICE_KEY", "MOOBEE_STREAM_BASE_URL",
+                     "MOOBEE_STREAM_HLS_TOKEN_SECRET"):
+            monkeypatch.delenv(name, raising=False)
         folder = root / "media" / "movie1"
         folder.mkdir(parents=True)
         (folder / "index.m3u8").write_text("#EXTM3U\n#EXTINF:6,\nsegment001.ts\n")
@@ -66,11 +69,13 @@ def configure(monkeypatch, playback=True):
     monkeypatch.setenv("MOOBEE_STREAM_ENABLED", "true")
     monkeypatch.setenv("MOOBEE_STREAM_BASE_URL", "http://127.0.0.1:8080")
     monkeypatch.setenv("MOOBEE_STREAM_SERVICE_KEY", KEY)
+    monkeypatch.setenv("MOOBEE_STREAM_HLS_TOKEN_SECRET", SECRET)
     monkeypatch.setenv("MOOBEE_STREAM_PLAYBACK_ENABLED", "true" if playback else "false")
 
 
-def stage_mock(monkeypatch, *, master=MASTER, media=MEDIA, segment=b"transcoded-segment",
-               sign_status=200, playback_expiry=None, segment_status=200):
+def stage_mock(monkeypatch, *, master=MASTER, media=MEDIA,
+               segment=b"transcoded-segment", sign_status=200,
+               playback_expiry=None, segment_status=200):
     logs = []
     def handle(req):
         logs.append((req.url.path, req.headers.get("x-service-key")))
@@ -92,7 +97,7 @@ def stage_mock(monkeypatch, *, master=MASTER, media=MEDIA, segment=b"transcoded-
                       if playback_expiry is None else playback_expiry)
             return httpx.Response(200, json={
                 "id": target,
-                "stream": f"/hls/{target}/{expiry}/{TOKEN}/master.m3u8",
+                "stream": f"/hls/{target}/{expiry}/{UPSTREAM_TOKEN}/master.m3u8",
                 "expiresAt": expiry,
             })
         assert req.url.path.startswith("/hls/")
@@ -118,70 +123,145 @@ def make_mapping(c, kind, local_id, upstream_id):
     assert r.status_code == 200, r.text
 
 
-def test_default_gateway_off_does_not_contact_stream_and_preserves_local(stage):
-    c, monkeypatch = stage
-    monkeypatch.setattr(stream_gateway, "_client", lambda: pytest.fail("remote call"))
-    local = c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8")
-    assert local.status_code == 200
-    assert "segment001.ts" in local.text
-    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
-                 "720p/index.m3u8").status_code == 404
-    configure(monkeypatch, playback=False)
-    stage_mock(monkeypatch)
+def initial(c, kind, ident, password=VIEWER["password"]):
+    path = ("movie" if kind == "movie" else "series")
+    return c.get(f"/{path}/{VIEWER['username']}/{password}/{ident}.m3u8")
+
+
+def referenced_path(content):
+    urls = [line.strip() for line in content.splitlines()
+            if line.strip() and not line.startswith("#")]
+    assert urls
+    url = urlsplit(urls[0])
+    assert url.scheme == "https" and url.netloc == "tv.example.com"
+    assert not url.query and not url.fragment
+    return url.path
+
+
+def token_paths(c, kind, ident):
+    master = initial(c, kind, ident)
+    assert master.status_code == 200, master.text
+    assert VIEWER["password"] not in master.text
+    assert VIEWER["username"] not in master.text
+    assert KEY not in master.text and SECRET not in master.text
+    assert "/stream-vod-t/" in master.text
+    assert "/hls/" not in master.text and UPSTREAM_TOKEN not in master.text
+    rendition_path = referenced_path(master.text)
+    media = c.get(rendition_path)
+    assert media.status_code == 200, media.text
+    assert VIEWER["password"] not in media.text
+    assert VIEWER["username"] not in media.text
+    segment_path = referenced_path(media.text)
+    assert "/stream-vod-t/" in segment_path
+    assert VIEWER["password"] not in segment_path
+    assert KEY not in segment_path and SECRET not in segment_path
+    return rendition_path, segment_path
+
+
+def test_gateway_off_preserves_local_vod_and_never_uses_remote(stage):
+    c, m = stage
+    m.setattr(stream_gateway, "_client", lambda: pytest.fail("unexpected upstream request"))
+    original = initial(c, "movie", 101)
+    assert original.status_code == 200 and "segment001.ts" in original.text
+    configure(m, playback=False)
+    stage_mock(m)
     make_mapping(c, "movie", 101, MOVIE)
-    assert c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8").text == local.text
-    assert not stream_gateway.gateway_enabled()
-    status = c.get("/admin/api/integrations/moobee-stream/status", auth=ADMIN)
-    assert status.json()["playback_supported"] is False
+    assert initial(c, "movie", 101).text == original.text
+    assert c.get("/stream-vod-t/not-a-token/movie/101/720p/index.m3u8").status_code == 404
+    assert c.get("/stream-vod/streamviewer/x/movie/101/720p/index.m3u8").status_code == 404
 
 
-def test_movie_and_episode_playback_via_authenticated_proxy(stage):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    calls = stage_mock(monkeypatch)
+def test_movie_and_episode_real_proxy_routes_contain_no_subscriber_password(stage):
+    c, m = stage
+    configure(m)
+    calls = stage_mock(m)
     make_mapping(c, "movie", 101, MOVIE)
     make_mapping(c, "episode", 301, EPISODE)
-    movie = c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8")
-    assert movie.status_code == 200, movie.text
-    assert "/stream-vod/streamviewer/viewer-password-12345678/movie/101/720p/index.m3u8" in movie.text
-    assert TOKEN not in movie.text and KEY not in movie.text
-    media = c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/720p/index.m3u8")
-    assert media.status_code == 200, media.text
-    assert "/stream-vod/streamviewer/viewer-password-12345678/movie/101/720p/segment_00001.ts" in media.text
-    segment = c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/720p/segment_00001.ts")
-    assert segment.status_code == 200 and segment.content == b"transcoded-segment"
-    assert segment.headers["cache-control"] == "private, no-store"
-    ep = c.get("/series/streamviewer/viewer-password-12345678/301.m3u8")
-    assert ep.status_code == 200 and "/episode/301/720p/index.m3u8" in ep.text
-    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/episode/301/"
-                 "720p/segment_00001.ts").status_code == 200
+    movie_rendition, movie_segment = token_paths(c, "movie", 101)
+    episode_rendition, episode_segment = token_paths(c, "episode", 301)
+    assert c.get(movie_segment).content == b"transcoded-segment"
+    assert c.get(episode_segment).content == b"transcoded-segment"
+    assert c.get(movie_segment).headers["cache-control"] == "private, no-store"
+    assert c.get(episode_rendition).headers["referrer-policy"] == "no-referrer"
     assert all(path.startswith("/api/") or key is None for path, key in calls)
-    assert c.get("/admin/api/integrations/moobee-stream/status", auth=ADMIN).json()["playback_supported"] is True
+    # The old credential-bearing HLS routes have been removed.
+    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
+                 "720p/segment_00001.ts").status_code == 404
 
 
-def test_auth_revocation_and_mapping_revocation_fail_closed(stage):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    calls = stage_mock(monkeypatch)
+def test_invalid_cross_item_tampered_and_bad_user_tokens_fail_before_upstream(stage):
+    c, m = stage
+    configure(m)
+    calls = stage_mock(m)
     make_mapping(c, "movie", 101, MOVIE)
+    make_mapping(c, "episode", 301, EPISODE)
+    rendition, segment = token_paths(c, "movie", 101)
     before = len(calls)
-    assert c.get("/movie/streamviewer/wrong/101.m3u8").status_code == 401
-    assert c.get("/stream-vod/streamviewer/wrong/movie/101/720p/segment_00001.ts").status_code == 401
+    assert initial(c, "movie", 101, password="wrong").status_code == 401
     assert len(calls) == before
+    assert c.get(segment.replace("/movie/101/", "/episode/301/")).status_code == 401
+    assert c.get(segment.replace("/movie/101/", "/movie/102/")).status_code == 401
+    token = segment.split("/")[2]
+    bad = token[:-1] + ("A" if token[-1] != "A" else "B")
+    assert c.get(segment.replace(token, bad)).status_code == 401
+    assert c.get(segment.replace(token, "invalid")).status_code == 401
+    assert len(calls) == before
+
+
+def test_token_expiry_and_signing_secret_rotation_fail_closed(stage):
+    c, m = stage
+    configure(m)
+    stage_mock(m)
+    make_mapping(c, "movie", 101, MOVIE)
+    rendition, segment = token_paths(c, "movie", 101)
+    real_now = int(time.time())
+    m.setattr(hls_access_tokens, "time",
+              type("FakeTime", (), {"time": staticmethod(lambda: real_now + 15000)}))
+    assert c.get(segment).status_code == 401
+    m.setattr(hls_access_tokens, "time",
+              type("FakeTime", (), {"time": staticmethod(lambda: real_now)}))
+    m.setenv("MOOBEE_STREAM_HLS_TOKEN_SECRET", "another-strong-rotated-secret-01234567890")
+    assert c.get(segment).status_code == 401
+
+
+def test_disable_user_password_reset_mapping_removal_all_revoke_segments(stage):
+    c, m = stage
+    configure(m)
+    calls = stage_mock(m)
+    make_mapping(c, "movie", 101, MOVIE)
+    make_mapping(c, "episode", 301, EPISODE)
+    _, movie_segment = token_paths(c, "movie", 101)
+    _, episode_segment = token_paths(c, "episode", 301)
+    before = len(calls)
     assert c.patch("/admin/api/users/streamviewer", auth=ADMIN,
                    json={"disabled": True}).status_code == 200
-    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
-                 "720p/segment_00001.ts").status_code == 401
+    assert c.get(movie_segment).status_code == 401
     assert len(calls) == before
     assert c.patch("/admin/api/users/streamviewer", auth=ADMIN,
                    json={"disabled": False}).status_code == 200
-    assert c.delete("/admin/api/integrations/moobee-stream/mappings/movie/101",
+    with main.connect() as db:
+        db.execute("UPDATE users SET salt=?,password_hash=? WHERE username=?",
+                   ("ab" * 16, "cd" * 64, VIEWER["username"]))
+        db.commit()
+    assert c.get(movie_segment).status_code == 401
+    # Re-creating a former user identity or changing password also revokes.
+    with main.connect() as db:
+        row = db.execute("SELECT salt,password_hash FROM users WHERE username=?",
+                         (VIEWER["username"],)).fetchone()
+        assert row
+    # Restore test subscriber only to verify mapping revocation with a fresh token.
+    with main.connect() as db:
+        salt = "ef" * 16
+        db.execute("UPDATE users SET salt=?,password_hash=? WHERE username=?",
+                   (salt, main.digest(VIEWER["password"], salt), VIEWER["username"]))
+        db.commit()
+    _, fresh_episode_segment = token_paths(c, "episode", 301)
+    assert c.delete("/admin/api/integrations/moobee-stream/mappings/episode/301",
                     auth=ADMIN).status_code == 200
-    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
-                 "720p/segment_00001.ts").status_code == 404
+    before = len(calls)
+    assert c.get(fresh_episode_segment).status_code == 404
     assert len(calls) == before
-    # With no mapping, local demo content remains playable.
-    assert "segment001.ts" in c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8").text
+    assert c.get(episode_segment).status_code == 401
 
 
 @pytest.mark.parametrize("payload", [
@@ -192,13 +272,12 @@ def test_auth_revocation_and_mapping_revocation_fail_closed(stage):
     "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=42\n720p/../../secret/index.m3u8\n",
 ])
 def test_remote_master_blocks_external_references(stage, payload):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    stage_mock(monkeypatch, master=payload)
+    c, m = stage
+    configure(m)
+    stage_mock(m, master=payload)
     make_mapping(c, "movie", 101, MOVIE)
-    out = c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8")
-    assert out.status_code == 502
-    assert "evil.example" not in out.text
+    r = initial(c, "movie", 101)
+    assert r.status_code == 502 and "evil.example" not in r.text
 
 
 @pytest.mark.parametrize("payload", [
@@ -208,45 +287,48 @@ def test_remote_master_blocks_external_references(stage, payload):
     "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"elsewhere\"\nsegment_00001.ts\n",
 ])
 def test_remote_media_playlist_blocks_external_references(stage, payload):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    stage_mock(monkeypatch, media=payload)
+    c, m = stage
+    configure(m)
+    stage_mock(m, media=payload)
     make_mapping(c, "movie", 101, MOVIE)
-    out = c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
-                "720p/index.m3u8")
-    assert out.status_code == 502
+    master = initial(c, "movie", 101)
+    assert master.status_code == 200
+    r = c.get(referenced_path(master.text))
+    assert r.status_code == 502
 
 
 @pytest.mark.parametrize("status", [302, 401, 404, 500])
-def test_signed_resolver_errors_never_fall_back_to_local(stage, status):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    stage_mock(monkeypatch, sign_status=status)
+def test_signed_resolver_errors_fail_closed(stage, status):
+    c, m = stage
+    configure(m)
+    stage_mock(m, sign_status=status)
     make_mapping(c, "movie", 101, MOVIE)
-    out = c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8")
+    out = initial(c, "movie", 101)
     assert out.status_code in (502, 404)
     assert "segment001.ts" not in out.text
 
 
-def test_signed_path_expiry_and_large_segments_fail_closed(stage):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    stage_mock(monkeypatch, playback_expiry=int(time.time()) - 100)
+def test_missing_token_secret_fails_closed(stage):
+    c, m = stage
+    configure(m)
+    calls = stage_mock(m)
     make_mapping(c, "movie", 101, MOVIE)
-    assert c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8").status_code == 502
-    stage_mock(monkeypatch, segment=b"x" * (stream_gateway.MAX_SEGMENT + 1))
-    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
-                 "720p/segment_00001.ts").status_code == 502
+    m.delenv("MOOBEE_STREAM_HLS_TOKEN_SECRET")
+    before = len(calls)
+    assert initial(c, "movie", 101).status_code == 503
+    assert len(calls) == before
+    assert c.get("/stream-vod-t/invalid/movie/101/720p/index.m3u8").status_code == 401
 
 
-def test_disabled_connector_flag_fails_closed_after_mapping(stage):
-    c, monkeypatch = stage
-    configure(monkeypatch)
-    stage_mock(monkeypatch)
+def test_upstream_expiry_segment_size_limit_and_flag_disabled(stage):
+    c, m = stage
+    configure(m)
+    stage_mock(m, playback_expiry=int(time.time()) - 100)
     make_mapping(c, "movie", 101, MOVIE)
-    monkeypatch.setenv("MOOBEE_STREAM_ENABLED", "false")
-    r = c.get("/movie/streamviewer/viewer-password-12345678/101.m3u8")
-    assert r.status_code == 200
-    assert "segment001.ts" in r.text
-    assert c.get("/stream-vod/streamviewer/viewer-password-12345678/movie/101/"
-                 "720p/index.m3u8").status_code == 404
+    assert initial(c, "movie", 101).status_code == 502
+    stage_mock(m, segment=b"x" * (stream_gateway.MAX_SEGMENT + 1))
+    rendition, segment = token_paths(c, "movie", 101)
+    assert c.get(segment).status_code == 502
+    m.setenv("MOOBEE_STREAM_ENABLED", "false")
+    assert c.get(segment).status_code == 404
+    assert "segment001.ts" in initial(c, "movie", 101).text
