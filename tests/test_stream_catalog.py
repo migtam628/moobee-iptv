@@ -113,6 +113,45 @@ def test_private_origin_allows_local_or_tls_private_only():
     assert stream.fixed_private_origin("https://10.3.4.5") == "https://10.3.4.5:443"
 
 
+def test_exact_pinned_tailscale_host_requires_explicit_opt_in(monkeypatch):
+    hostname = "moobee-stream-vps.tail08e9d7.ts.net"
+    url = f"https://{hostname}"
+    monkeypatch.delenv("MOOBEE_STREAM_TAILSCALE_HOSTNAME", raising=False)
+    with pytest.raises(ValueError):
+        stream.fixed_private_origin(url)
+
+    monkeypatch.setenv("MOOBEE_STREAM_TAILSCALE_HOSTNAME", hostname)
+    assert stream.fixed_private_origin(url) == url + ":443"
+    assert stream.fixed_private_origin(url + ":443") == url + ":443"
+
+
+@pytest.mark.parametrize("url", [
+    "http://moobee-stream-vps.tail08e9d7.ts.net",
+    "https://moobee-stream-vps.tail08e9d7.ts.net:8443",
+    "https://other-device.tail08e9d7.ts.net",
+    "https://moobee-stream-vps.tail08e9d7.ts.net.evil.example",
+    "https://moobee-stream-vps.tail08e9d7.ts.net@evil.example",
+    "https://moobee-stream-vps.tail08e9d7.ts.net/api/private",
+    "https://moobee-stream-vps.tail08e9d7.ts.net/?redirect=true",
+    "https://8.8.8.8",
+])
+def test_pinned_tailscale_origin_rejects_untrusted_variations(monkeypatch, url):
+    monkeypatch.setenv("MOOBEE_STREAM_TAILSCALE_HOSTNAME",
+                       "moobee-stream-vps.tail08e9d7.ts.net")
+    with pytest.raises(ValueError):
+        stream.fixed_private_origin(url)
+
+
+@pytest.mark.parametrize("hostname", [
+    "*.ts.net", "evil.example", "example.ts.net", "https://moobee-stream-vps.tail08e9d7.ts.net",
+    "moobee-stream-vps.tail08e9d7.ts.net:443", "moobee-stream-vps..ts.net",
+])
+def test_invalid_tailscale_host_configuration_is_ignored(monkeypatch, hostname):
+    monkeypatch.setenv("MOOBEE_STREAM_TAILSCALE_HOSTNAME", hostname)
+    with pytest.raises(ValueError):
+        stream.fixed_private_origin("https://moobee-stream-vps.tail08e9d7.ts.net")
+
+
 def test_disabled_connector_does_not_call_upstream_or_create_tables(setup):
     client, root, monkeypatch = setup
     monkeypatch.setattr(stream, "_client", lambda: pytest.fail("Connector must not open a network client"))
