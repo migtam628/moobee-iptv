@@ -104,6 +104,13 @@ def test_vod_catalog_xtream_and_authenticated_playback(monkeypatch):
         assert client.get(movie_url).status_code == 422
         manifest.write_text("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key\"\nsegment001.ts\n")
         assert client.get(movie_url).status_code == 501
+        # HLS metadata can also carry URLs; reject external track/variant references.
+        manifest.write_text('#EXTM3U\\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",URI="https://evil.example/audio.m3u8"\\nsegment001.ts\\n'.replace('\\n', '\n'))
+        assert client.get(movie_url).status_code == 501
+        manifest.write_text('#EXTM3U\\n#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=100,URI="https://evil.example/iframe.m3u8"\\nsegment001.ts\\n'.replace('\\n', '\n'))
+        assert client.get(movie_url).status_code == 501
+        manifest.write_text("#EXTM3U\n#EXT-X-UNSUPPORTED:UNTRUSTED\nsegment001.ts\n")
+        assert client.get(movie_url).status_code == 422
         manifest.write_text("#EXTM3U\nsegment001.ts\n")
         assert client.get(movie_url).status_code == 200
 
