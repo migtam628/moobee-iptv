@@ -220,7 +220,9 @@ def ensure_mapping_schema(db):
 
 
 def mapping_rows(db):
-    ensure_mapping_schema(db)
+    if not db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                         AND name='vod_external_sources'""").fetchone():
+        return []
     rows = db.execute("""SELECT kind,item_id,video_uuid,enabled,
         last_known_status,updated_at
         FROM vod_external_sources ORDER BY kind,item_id""").fetchall()
