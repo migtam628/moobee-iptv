@@ -162,17 +162,17 @@ def rewrite_manifest(data, *, mode, token, kind, item_id, rendition=None):
 
 def _resolve(username, password, kind, item_id):
     import main
-    main.auth(username, password)
+    subscriber = main.auth(username, password)
     video_id = mapped_uuid(kind, item_id)
     if video_id is None:
         raise HTTPException(404, "Remote VOD not enabled or not mapped")
-    return video_id
+    return subscriber, video_id
 
 
 def manifest(username, password, kind, item_id):
     import main
-    video_id = _resolve(username, password, kind, item_id)
-    token = issue_access_token(main.auth(username, password), kind, item_id, video_id)
+    subscriber, video_id = _resolve(username, password, kind, item_id)
+    token = issue_access_token(subscriber, kind, item_id, video_id)
     origin, key = configured_client()
     with _client() as client:
         signed = _signed_media(client, origin, key, video_id)
