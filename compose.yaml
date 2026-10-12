@@ -6,6 +6,9 @@ services:
       PUBLIC_URL: ${PUBLIC_URL}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      MOOBEE_STREAM_ENABLED: ${MOOBEE_STREAM_ENABLED:-false}
+      MOOBEE_STREAM_BASE_URL: ${MOOBEE_STREAM_BASE_URL:-}
+      MOOBEE_STREAM_SERVICE_KEY: ${MOOBEE_STREAM_SERVICE_KEY:-}
     volumes:
       - ./data:/data
       - ./media:/media:ro
