@@ -29,7 +29,8 @@ def run():
         raise RuntimeError("Staging files already exist; refusing to overwrite")
     if not Path("/data").is_dir() or not Path("/media").is_dir():
         raise RuntimeError("Disposable data/media mount not found")
-    if os.environ.get("PUBLIC_URL") != "http://127.0.0.1:18000":
+    stage_url = os.environ.get("PUBLIC_URL")
+    if stage_url not in ("http://127.0.0.1:18000", "http://127.0.0.1:18001"):
         raise RuntimeError("Unexpected staging URL")
     if not MEDIA.parent.is_dir():
         raise RuntimeError("Media mount not found")
@@ -68,7 +69,7 @@ def run():
         db.commit()
     fd = os.open(str(ACCESS), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as out:
-        out.write("Server: http://127.0.0.1:18000\n")
+        out.write(f"Server: {stage_url}\n")
         out.write(f"Username: {username}\nPassword: {password}\n")
     print("STAGING INITIALIZED. Temporary database and media only.")
     print("Credentials saved to /data/stage-access.txt (mode 0600).")

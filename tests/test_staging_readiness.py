@@ -28,8 +28,9 @@ def test_script_syntax_and_credentials_are_stage_only(tmp_path, monkeypatch):
 def test_manifest_reference_is_loopback_only():
     username = "moobee-stage"
     password = "a" * 28
-    prefix = ("http://127.0.0.1:18000/stream-vod/"
-              + username + "/" + password + "/movie/101/")
+    token = "A" * 180 + "." + "B" * 43
+    prefix = ("http://127.0.0.1:18000/stream-vod-t/"
+              + token + "/movie/101/")
     manifest = ("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200000\n"
                 + prefix + "480p/index.m3u8\n")
     assert probe.first_path(
@@ -42,10 +43,12 @@ def test_manifest_reference_is_loopback_only():
     ).endswith("segment_00001.ts")
     for bad in (
         manifest.replace("127.0.0.1:18000", "example.com"),
-        manifest.replace(username + "/" + password, username + "/wrong"),
+        manifest.replace(token, "invalid-token"),
         manifest.replace("480p/index.m3u8", "480p/segment_00001.ts"),
         manifest.replace("http://127.0.0.1", "https://127.0.0.1"),
         manifest.replace("#EXTM3U", "#EXT-X-KEY"),
+        manifest.replace("movie/101", "movie/999"),
+        manifest.replace(token, username + "/" + password),
         manifest + "https://moobee-stream-vps.tail08e9d7.ts.net/hls/x",
     ):
         with pytest.raises(probe.ProbeError):

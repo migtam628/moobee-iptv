@@ -40,7 +40,7 @@ def successful_path(content, suffix):
     check(bool(urls), "HLS manifest contains a referenced asset")
     url = urlsplit(urls[0])
     check(url.scheme == "https" and url.netloc == "stage.invalid" and
-          url.path.startswith("/stream-vod/") and
+          url.path.startswith("/stream-vod-t/") and
           url.path.endswith(suffix) and not url.query and not url.fragment,
           "HLS uses only staging gateway URLs")
     return url.path
@@ -58,6 +58,7 @@ def run():
     if len(os.environ["MOOBEE_STREAM_SERVICE_KEY"].encode()) < 32:
         raise RuntimeError("Invalid staging service key")
 
+    os.environ["MOOBEE_STREAM_HLS_TOKEN_SECRET"] = secrets.token_urlsafe(48)
     os.environ["MOOBEE_STREAM_ENABLED"] = "true"
     os.environ["MOOBEE_STREAM_PLAYBACK_ENABLED"] = "false"
 
@@ -125,6 +126,7 @@ def run():
             ):
                 master = client.get(route)
                 check(master.status_code == 200 and
+                      user not in master.text and password not in master.text and
                       "segment001.ts" not in master.text and
                       "/hls/" not in master.text and
                       HOST not in master.text and
