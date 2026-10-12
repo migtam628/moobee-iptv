@@ -7,6 +7,7 @@ Does not write the staging SQLite database or touch production.
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import os
+import re
 from pathlib import Path
 from statistics import median, mean
 import sys
@@ -64,18 +65,24 @@ def first_path(playlist, user, password, *, rendition):
     lines = [line.strip() for line in s.splitlines()
              if line.strip() and not line.startswith("#")]
     require(bool(lines), "HLS manifest has no assets")
-    url = urlsplit(lines[0])
-    expected = ("/stream-vod/" + quote(user, safe="") + "/" +
-                quote(password, safe="") + "/")
-    require(url.scheme == "http" and url.netloc == "127.0.0.1:18000"
-            and url.path.startswith(expected)
-            and not url.query and not url.fragment,
-            "unexpected asset destination")
-    if rendition:
-        require(url.path.endswith("/index.m3u8"), "unexpected rendition filename")
-    else:
-        require(url.path.endswith(".ts"), "unexpected segment filename")
-    return url.geturl()
+    require(user not in s and password not in s,
+            "subscriber credentials leaked in media playlist")
+    # Bearer tokens are credentials too; validate paths without logging them.
+    token_pattern = re.compile(r"[A-Za-z0-9_-]{80,700}\\.[A-Za-z0-9_-]{43}")
+    for line in lines:
+        url = urlsplit(line)
+        require(url.scheme == "http" and url.netloc == "127.0.0.1:18000"
+                and not url.query and not url.fragment,
+                "unexpected media origin")
+        if rendition:
+            path_pattern = (r"/stream-vod-t/" + token_pattern.pattern
+                            + r"/(?:movie/101|episode/301)/[A-Za-z0-9_-]{1,40}/index\\.m3u8")
+        else:
+            path_pattern = (r"/stream-vod-t/" + token_pattern.pattern
+                            + r"/(?:movie/101|episode/301)/[A-Za-z0-9_-]{1,40}/segment_[0-9]{5}\\.ts")
+        require(re.fullmatch(path_pattern, url.path) is not None,
+                "unexpected signed-token media path")
+    return lines[0]
 
 
 def attempt(kind, user, password):
