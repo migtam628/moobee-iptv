@@ -83,8 +83,11 @@ def _safe_number(value, maximum):
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("Invalid numeric metadata")
-    if not math.isfinite(value) or value < 0 or value > maximum:
-        raise ValueError("Invalid numeric metadata")
+    try:
+        if not math.isfinite(value) or value < 0 or value > maximum:
+            raise ValueError("Invalid numeric metadata")
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("Invalid numeric metadata") from exc
     return value
 
 
