@@ -31,13 +31,13 @@ def test_manifest_reference_is_loopback_only():
     token = "A" * 180 + "." + "B" * 43
     prefix = ("http://127.0.0.1:18000/stream-vod-t/"
               + token + "/movie/101/")
-    manifest = ("#EXTM3U\\n#EXT-X-STREAM-INF:BANDWIDTH=200000\\n"
-                + prefix + "480p/index.m3u8\\n")
+    manifest = ("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=200000\n"
+                + prefix + "480p/index.m3u8\n")
     assert probe.first_path(
         manifest.encode(), username, password, rendition=True
     ).endswith("480p/index.m3u8")
-    playlist = ("#EXTM3U\\n#EXTINF:5,\\n" +
-                prefix + "480p/segment_00001.ts\\n")
+    playlist = ("#EXTM3U\n#EXTINF:5,\n" +
+                prefix + "480p/segment_00001.ts\n")
     assert probe.first_path(
         playlist.encode(), username, password, rendition=False
     ).endswith("segment_00001.ts")
