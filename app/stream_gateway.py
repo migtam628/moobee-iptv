@@ -101,7 +101,7 @@ def _binary(client, origin, signed_prefix, asset, *, max_bytes):
             if response.headers.get("Content-Encoding", "identity").lower() not in ("identity", ""):
                 raise HTTPException(502, "Compressed private media not supported")
             body = bytearray()
-            for chunk in response.iter_raw():
+            for chunk in response.iter_bytes():
                 body.extend(chunk)
                 if len(body) > max_bytes:
                     raise HTTPException(502, "Private media exceeds response limit")
