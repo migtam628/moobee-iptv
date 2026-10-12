@@ -12,6 +12,7 @@ from typing import Literal
 
 from admin_web import guard, audit
 from main import connect
+import main
 from vod_catalog import ensure_vod_schema
 from stream_catalog import (
     is_enabled, configured_client, fetch_catalog, fetch_video,
@@ -57,15 +58,17 @@ def _configured():
 def import_preview(item: PreviewRequest, actor: str = Depends(guard)):
     """Pure metadata preview: no CREATE TABLE, INSERT, UPDATE or DELETE."""
     result = fetch_catalog(max_pages=item.max_pages)
-    with connect() as db:
-        existing_table = db.execute("""SELECT 1 FROM sqlite_master
-            WHERE type='table' AND name='vod_external_sources'""").fetchone()
-        if existing_table:
-            mapped = {(row["video_uuid"]): (row["kind"], row["item_id"])
-                      for row in db.execute(
-                          "SELECT kind,item_id,video_uuid FROM vod_external_sources")}
-        else:
-            mapped = {}
+    # Explicitly read-only: no table creation or journal-mode changes in preview.
+    mapped = {}
+    if main.DB.is_file():
+        with sqlite3.connect("file:" + str(main.DB) + "?mode=ro", uri=True) as db:
+            db.row_factory = sqlite3.Row
+            existing_table = db.execute("""SELECT 1 FROM sqlite_master
+                WHERE type='table' AND name='vod_external_sources'""").fetchone()
+            if existing_table:
+                mapped = {row["video_uuid"]: (row["kind"], row["item_id"])
+                          for row in db.execute(
+                              "SELECT kind,item_id,video_uuid FROM vod_external_sources")}
     for record in result["videos"]:
         link = mapped.get(record["video_id"])
         record["mapping"] = ({"kind": link[0], "item_id": link[1]}
@@ -93,10 +96,10 @@ def assign_mapping(kind: Literal["movie", "episode"], item_id: int,
         raise HTTPException(422, "Only ready videos can be enabled for future integration")
     with connect() as db:
         ensure_vod_schema(db)
-        ensure_mapping_schema(db)
         table = "vod_movies" if kind == "movie" else "vod_episodes"
         if db.execute(f"SELECT 1 FROM {table} WHERE id=?", (item_id,)).fetchone() is None:
             raise HTTPException(404, "Local movie or episode does not exist")
+        ensure_mapping_schema(db)
         try:
             db.execute("""INSERT INTO vod_external_sources
                 (kind,item_id,provider,video_uuid,enabled,last_known_status,updated_at)
@@ -124,7 +127,9 @@ def delete_mapping(kind: Literal["movie", "episode"], item_id: int,
     if item_id < 1:
         raise HTTPException(422, "Invalid catalog item ID")
     with connect() as db:
-        ensure_mapping_schema(db)
+        if not db.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                             AND name='vod_external_sources'""").fetchone():
+            raise HTTPException(404, "Mapping does not exist")
         deleted = db.execute("DELETE FROM vod_external_sources WHERE kind=? AND item_id=?",
                              (kind,item_id)).rowcount
         if not deleted:
