@@ -135,6 +135,9 @@ def unsupported_ts(username:str,password:str,stream_id:int):
 from admin_web import router as admin_router
 app.include_router(admin_router)
 
+# Public, read-only client feature discovery (no secrets).
+from capabilities import router as capabilities_router
+app.include_router(capabilities_router)
 from source_management import router as source_management_router
 app.include_router(source_management_router)
 
