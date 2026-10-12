@@ -2,6 +2,9 @@
 
 **Proposal only:** no API changes have been made. Fields and routes listed as "current" were read from [moobee-stream](https://github.com/migtam628/moobee-stream) `main`. Proposed adapter routes and fields are not implemented.
 
+**Client scope:** StreamBoss is the **only** player being integrated and validated. MooBee IPTV remains the central backend, and MooBee Stream provides ingest/transcoding/HLS. `iptv-player` and `vidplus-movie-player` are explicitly optional, outside this program, and must not be added as dependencies or acceptance targets. All playback compatibility tests in this document refer to StreamBoss.
+
+
 ## Upstream routing as implemented
 
 MooBee Stream Nginx rewrites `/api/...` to Fastify `/...`:
