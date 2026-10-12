@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from admin_web import guard, audit
 from main import connect
 from vod_catalog import ensure_vod_schema, local_manifest, SAFE_FOLDER
+from stream_catalog import clear_mapping_if_present
 
 router = APIRouter(prefix="/admin/api/vod")
 
@@ -125,6 +126,7 @@ def remove_movie(item_id:int, actor: str=Depends(guard)):
         ensure_vod_schema(db)
         changed=db.execute("DELETE FROM vod_movies WHERE id=?", (item_id,)).rowcount
         if not changed: raise HTTPException(404,"Movie does not exist")
+        clear_mapping_if_present(db, 'movie', item_id)
         audit(db,actor,"vod.movie.delete",str(item_id))
         db.commit()
     return {"deleted":item_id}
@@ -136,6 +138,7 @@ def remove_episode(item_id:int, actor: str=Depends(guard)):
         ensure_vod_schema(db)
         changed=db.execute("DELETE FROM vod_episodes WHERE id=?", (item_id,)).rowcount
         if not changed: raise HTTPException(404,"Episode does not exist")
+        clear_mapping_if_present(db, 'episode', item_id)
         audit(db,actor,"vod.episode.delete",str(item_id))
         db.commit()
     return {"deleted":item_id}
@@ -147,6 +150,10 @@ def remove_series(item_id:int, actor: str=Depends(guard)):
         ensure_vod_schema(db)
         changed=db.execute("DELETE FROM vod_series WHERE id=?", (item_id,)).rowcount
         if not changed: raise HTTPException(404,"Series does not exist")
+        episode_ids = [row["id"] for row in db.execute(
+            "SELECT id FROM vod_episodes WHERE series_id=?", (item_id,))]
+        for episode_id in episode_ids:
+            clear_mapping_if_present(db, 'episode', episode_id)
         db.execute("DELETE FROM vod_episodes WHERE series_id=?", (item_id,))
         audit(db,actor,"vod.series.delete",str(item_id))
         db.commit()

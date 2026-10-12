@@ -145,3 +145,7 @@ app.include_router(epg_admin_router)
 # Private VOD catalog control; subscriber playback stays on public TV domain.
 from admin_vod import router as admin_vod_router
 app.include_router(admin_vod_router)
+
+# Disabled-by-default private MooBee Stream catalog adapter. No subscriber routes.
+from admin_stream_integration import router as stream_catalog_admin_router
+app.include_router(stream_catalog_admin_router)

@@ -14,6 +14,22 @@
 <form id="vod-episode-form"><div><label>Episode ID</label><input name="id" type="number" min="1" required></div><div><label>Series</label><select name="series_id" id="vod-series-select" required style="width:100%;background:#111e35;color:white;padding:11px;border:1px solid #31415d;border-radius:8px"></select></div><div><label>Season number</label><input name="season" type="number" value="1" min="1" max="500" required></div><div><label>Episode number</label><input name="episode" type="number" value="1" min="1" max="2000" required></div><div><label>Episode title</label><input name="name" maxlength="150" required></div><div><label>Media folder</label><input name="folder" pattern="[A-Za-z0-9_-]+" required></div><div><label>Description</label><input name="description" maxlength="2000"></div><div><button type="submit">Add episode</button></div></form>
 <div id="vod-summary" class="muted" role="status">Loading catalog…</div>
 <div class="tablewrap"><table><thead><tr><th>Type</th><th>ID</th><th>Title</th><th>Media / series</th><th>Action</th></tr></thead><tbody id="vod-body"></tbody></table></div>
+</section><section class="panel" id="stream-integration-panel">
+<div class="panelhead"><h2>MooBee Stream · Private Catalog Adapter</h2><button class="secondary" id="stream-reload">Refresh mappings</button></div>
+<p class="muted">Off by default. This feature previews metadata from an administrator-configured private MooBee Stream service and maps IDs to existing VOD items. No videos are imported or downloaded and no remote playback is enabled. Local movie and episode playback remains unchanged.</p>
+<p id="stream-status" class="muted" role="status">Checking connector configuration…</p>
+<form id="stream-preview-form"><div><label for="stream-max-pages">Maximum catalog pages (100 records/page)</label><input id="stream-max-pages" type="number" min="1" max="10" value="3" required></div><div><button type="submit" id="stream-preview-btn">Preview remote catalog (read only)</button></div></form>
+<div id="stream-preview-summary" class="muted" role="status">No preview requested</div>
+<div class="tablewrap"><table><thead><tr><th>Title</th><th>Type</th><th>Status</th><th>UUID</th><th>Mapping</th></tr></thead><tbody id="stream-preview-body"></tbody></table></div>
+<h2>Map a remote video to existing local VOD</h2>
+<form id="stream-mapping-form">
+<div><label for="stream-map-kind">Local item type</label><select id="stream-map-kind" style="width:100%;background:#111e35;color:white;padding:11px;border:1px solid #31415d;border-radius:8px"><option value="movie">Movie</option><option value="episode">Episode</option></select></div>
+<div><label for="stream-map-item">Existing MooBee IPTV item</label><select id="stream-map-item" required style="width:100%;background:#111e35;color:white;padding:11px;border:1px solid #31415d;border-radius:8px"></select></div>
+<div><label for="stream-map-video">MooBee Stream video (from preview)</label><select id="stream-map-video" required style="width:100%;background:#111e35;color:white;padding:11px;border:1px solid #31415d;border-radius:8px"></select></div>
+<div><label for="stream-map-enabled">Reserve mapping as enabled for future integration (does not enable playback)</label><input type="checkbox" id="stream-map-enabled" style="width:auto"></div>
+<div><button id="stream-save-map" type="submit">Save UUID mapping</button></div>
+</form>
+<div class="tablewrap"><table><thead><tr><th>Local item</th><th>UUID</th><th>Upstream status</th><th>Reserved status</th><th>Action</th></tr></thead><tbody id="stream-mappings-body"></tbody></table></div>
 </section><section class="panel"><h2>Recent administrative activity</h2><div id="audit" class="muted">Loading…</div></section><p class="muted">MooBee IPTV · Authorized content only · Active streaming sessions are not measured in v0.2.</p></main><script>
 const $=id=>document.getElementById(id);let editing=null;let currentChannels=[];
 function notify(msg,error=false){const el=$("message");el.hidden=false;el.className="notice"+(error?" error":"");el.textContent=msg;window.scrollTo({top:0,behavior:"smooth"})}
@@ -42,5 +58,46 @@ function readVodForm(form){const data=Object.fromEntries(new FormData(form));for
 async function loadVod(){try{const d=await api("vod"),tbody=$("vod-body"),selector=$("vod-series-select");tbody.replaceChildren();selector.replaceChildren();$("vod-summary").textContent=d.movies.length+" movies · "+d.series.length+" series · "+d.episodes.length+" episodes";for(const s of d.series){const o=document.createElement("option");o.value=s.id;o.textContent=s.id+" — "+s.name;selector.appendChild(o)}for(const [kind,items] of [["movies",d.movies],["series",d.series],["episodes",d.episodes]]){for(const item of items){const tr=document.createElement("tr");cell(tr,kind==="movies"?"Movie":kind==="series"?"Series":"Episode");cell(tr,item.id);cell(tr,item.name);cell(tr,item.folder||("Series #"+item.series_id));const td=cell(tr,"");action(td,"Delete",async()=>{if(!confirm("Delete "+kind.slice(0,-1)+" "+item.name+" from catalog? Media files will remain."))return;try{await api("vod/"+kind+"/"+item.id,{method:"DELETE"});await loadVod()}catch(e){notify(e.message,true)}},"danger");tbody.appendChild(tr)}}}catch(e){notify("VOD catalog failed: "+e.message,true)}}
 $("vod-refresh").onclick=loadVod;
 for(const [formId,resource] of [["vod-movie-form","movies"],["vod-series-form","series"],["vod-episode-form","episodes"]]){$(formId).onsubmit=async e=>{e.preventDefault();const form=e.target;try{await api("vod/"+resource,{method:"POST",body:JSON.stringify(readVodForm(form))});notify("Saved "+resource.slice(0,-1)+" catalog item");form.reset();await loadVod()}catch(err){notify(err.message,true)}}}
-refresh();loadGuide();loadVod();
+
+let streamVod={movies:[],episodes:[]},streamVideos=[];
+function streamChooseTargets(){
+ const kind=$("stream-map-kind").value,el=$("stream-map-item");el.replaceChildren();
+ const items=kind==="movie"?streamVod.movies:streamVod.episodes;
+ for(const item of items){const opt=document.createElement("option");opt.value=item.id;opt.textContent=item.id+" — "+item.name;el.appendChild(opt)}
+ const list=$("stream-map-video");list.replaceChildren();
+ for(const item of streamVideos.filter(v=>v.media_type===(kind==="movie"?"movie":"tv"))){const opt=document.createElement("option");opt.value=item.video_id;opt.textContent=item.title+" ("+item.status+") — "+item.video_id;list.appendChild(opt)}
+}
+$("stream-map-kind").onchange=streamChooseTargets;
+async function streamLoad(){
+ try{
+   const [state,local,maps]=await Promise.all([api("integrations/moobee-stream/status"),api("vod"),api("integrations/moobee-stream/mappings")]);
+   streamVod=local;streamChooseTargets();
+   $("stream-status").textContent="Connector: "+(state.enabled?"enabled":"disabled")+" · Configuration: "+(state.configured?"ready":"not ready")+" · Playback integration: NOT AVAILABLE";
+   $("stream-preview-btn").disabled=!state.configured;
+   $("stream-save-map").disabled=!state.configured;
+   const body=$("stream-mappings-body");body.replaceChildren();
+   for(const item of maps.mappings){const tr=document.createElement("tr");cell(tr,item.kind+" #"+item.item_id);cell(tr,item.video_uuid);cell(tr,item.last_known_status);cell(tr,item.enabled?"Reserved / enabled":"Disabled");const td=cell(tr,"");action(td,"Remove",async()=>{if(!confirm("Remove only this remote mapping? Local video files and catalog stay unchanged."))return;try{await api("integrations/moobee-stream/mappings/"+item.kind+"/"+item.item_id,{method:"DELETE"});await streamLoad()}catch(err){notify(err.message,true)}},"danger");body.appendChild(tr)}
+ }catch(e){$("stream-status").textContent="Unable to load connector status: "+e.message}
+}
+$("stream-reload").onclick=streamLoad;
+$("stream-preview-form").onsubmit=async e=>{
+ e.preventDefault();const summary=$("stream-preview-summary");summary.textContent="Reading private catalog…";
+ try{
+   const d=await api("integrations/moobee-stream/preview",{method:"POST",body:JSON.stringify({max_pages:Number($("stream-max-pages").value)})});
+   streamVideos=d.videos;const tbody=$("stream-preview-body");tbody.replaceChildren();
+   for(const item of d.videos){const tr=document.createElement("tr");cell(tr,item.title);cell(tr,item.media_type);cell(tr,item.status);cell(tr,item.video_id);cell(tr,item.mapping?item.mapping.kind+" #"+item.mapping.item_id:"Not mapped");tbody.appendChild(tr)}
+   summary.textContent=d.count+" videos · "+d.pages+" page(s) · "+(d.complete?"complete catalog":"PARTIAL CATALOG: page limit reached; preview is not exhaustive")+". No metadata saved.";
+   streamChooseTargets();
+ }catch(err){summary.textContent="Preview failed: "+err.message;streamVideos=[];streamChooseTargets()}
+};
+$("stream-mapping-form").onsubmit=async e=>{
+ e.preventDefault();const kind=$("stream-map-kind").value,id=$("stream-map-item").value,videoId=$("stream-map-video").value;
+ if(!id||!videoId)return notify("Choose an existing local item and a previewed Stream video",true);
+ try{
+   const result=await api("integrations/moobee-stream/mappings/"+kind+"/"+id,{method:"PUT",body:JSON.stringify({video_id:videoId,enabled:$("stream-map-enabled").checked})});
+   notify("Saved mapping for "+result.kind+" #"+result.item_id+". Playback remains local-only.");
+   await streamLoad();
+ }catch(err){notify(err.message,true)}
+};
+refresh();loadGuide();loadVod();streamLoad();
 </script></body></html>
