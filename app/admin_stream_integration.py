@@ -15,6 +15,7 @@ from admin_web import guard, audit
 from main import connect
 import main
 from vod_catalog import ensure_vod_schema
+from stream_gateway import gateway_enabled
 from stream_catalog import (
     is_enabled, configured_client, fetch_catalog, fetch_video,
     ensure_mapping_schema, mapping_rows,
@@ -40,7 +41,7 @@ def integration_status(actor: str = Depends(guard)):
     return {
         "enabled": is_enabled(),
         "configured": _configured(),
-        "playback_supported": False,
+        "playback_supported": gateway_enabled(),
         "catalog_write_mode": "manual-mapping-only",
     }
 
@@ -80,7 +81,7 @@ def import_preview(item: PreviewRequest, actor: str = Depends(guard)):
 @router.get("/mappings")
 def list_mappings(actor: str = Depends(guard)):
     with connect() as db:
-        return {"mappings": mapping_rows(db), "playback_supported": False}
+        return {"mappings": mapping_rows(db), "playback_supported": gateway_enabled()}
 
 
 @router.put("/mappings/{kind}/{item_id}")
@@ -118,7 +119,7 @@ def assign_mapping(kind: Literal["movie", "episode"], item_id: int,
     return {
         "kind": kind, "item_id": item_id, "video_id": video["video_id"],
         "enabled": item.enabled, "upstream_status": video["status"],
-        "playback_supported": False,
+        "playback_supported": gateway_enabled(),
     }
 
 
