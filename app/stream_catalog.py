@@ -38,7 +38,7 @@ def fixed_private_origin(raw):
         if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
             raise ValueError("Origin must have no credentials, path or query")
         address = ipaddress.IPv4Address(parts.hostname)
-        port = parts.port or (443 if parts.scheme == "https" else 80)
+        port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
         if not 1 <= port <= 65535:
             raise ValueError("Invalid port")
     except (ValueError, TypeError) as exc:
