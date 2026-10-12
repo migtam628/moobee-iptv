@@ -4,12 +4,14 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, HTMLResponse, Response
 from epg_core import get_mappings, get_epg, render_xmltv
+from vod_catalog import vod_action, VOD_ACTIONS, router as vod_router
 
 DATA = Path('/data')
 DB = DATA / 'server.sqlite3'
 MEDIA = Path('/media')
 BASE = os.environ.get('PUBLIC_URL', 'https://tv.example.com').rstrip('/')
 app = FastAPI(title='Private Xtream-compatible Server', docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(vod_router)
 
 def connect():
     DATA.mkdir(parents=True, exist_ok=True)
@@ -48,7 +50,7 @@ def home():
     return '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private TV</title></head><body style="background:#101827;color:#eff6ff;font:16px system-ui;padding:40px;max-width:660px;margin:auto"><h1>Private TV Server</h1><p>Self-hosted Xtream-compatible API is running.</p><p>Configure your client with this server URL and the credentials created through the server CLI.</p><p>Only authorized media is supported.</p></body></html>'
 
 @app.get('/player_api.php')
-def player_api(request:Request, username:str='', password:str='', action:str='', category_id:str='', stream_id:int=0, limit:int=10):
+def player_api(request:Request, username:str='', password:str='', action:str='', category_id:str='', stream_id:int=0, limit:int=10, vod_id:int=0, series_id:int=0):
     u=auth(username,password)
     with connect() as db:
         channels=db.execute('SELECT * FROM channels ORDER BY id').fetchall()
@@ -56,7 +58,9 @@ def player_api(request:Request, username:str='', password:str='', action:str='',
     categories=sorted(set(c['category'] for c in channels))
     if action=='get_live_categories': return [{'category_id':x,'category_name':x,'parent_id':0} for x in categories]
     if action=='get_live_streams': return [stream_data(c,mappings.get(c['id'],'')) for c in channels if not category_id or c['category']==category_id]
-    if action in ('get_vod_categories','get_vod_streams','get_series_categories','get_series'): return []
+    if action in VOD_ACTIONS:
+        with connect() as db:
+            return vod_action(db,action,category_id,stream_id,vod_id,series_id)
     if action in ('get_short_epg','get_simple_data_table'):
         if stream_id < 1: return {'epg_listings':[]}
         with connect() as db: listings=get_epg(db,stream_id,limit)
@@ -137,3 +141,7 @@ app.include_router(source_management_router)
 # Private XMLTV import/mapping routes. No remote source fetching.
 from admin_epg import router as epg_admin_router
 app.include_router(epg_admin_router)
+
+# Private VOD catalog control; subscriber playback stays on public TV domain.
+from admin_vod import router as admin_vod_router
+app.include_router(admin_vod_router)
