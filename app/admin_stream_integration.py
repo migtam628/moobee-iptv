@@ -7,7 +7,7 @@ import sqlite3
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Literal
 
 from admin_web import guard, audit
@@ -22,10 +22,12 @@ router = APIRouter(prefix="/admin/api/integrations/moobee-stream")
 
 
 class PreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     max_pages: int = Field(default=3, ge=1, le=10)
 
 
 class MappingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     video_id: str = Field(min_length=36, max_length=36)
     enabled: bool = False
 
