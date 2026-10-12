@@ -291,3 +291,10 @@ def test_missing_or_weak_service_configuration_fails_closed(monkeypatch):
     with pytest.raises(HTTPException) as caught:
         stream.configured_client()
     assert caught.value.status_code == 503
+
+
+def test_extreme_numeric_metadata_cannot_crash_preview():
+    sample = movie_record()
+    sample["width"] = 10 ** 400
+    with pytest.raises(ValueError, match="Invalid numeric metadata"):
+        stream.normalize_video(sample)
