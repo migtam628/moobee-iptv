@@ -16,7 +16,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
-BASE = "http://127.0.0.1:18000"
+BASE = os.environ.get("MOOBEE_STAGE_LOOPBACK_URL", "http://127.0.0.1:18000")
 ACCESS = Path("/stage-access.txt")
 MAX_BYTES = 16 * 1024 * 1024
 MAX_MASTER_BYTES = 256_000
@@ -71,7 +71,7 @@ def first_path(playlist, user, password, *, rendition):
     token_pattern = re.compile(r"[A-Za-z0-9_-]{80,700}\\.[A-Za-z0-9_-]{43}")
     for line in lines:
         url = urlsplit(line)
-        require(url.scheme == "http" and url.netloc == "127.0.0.1:18000"
+        require(url.scheme == "http" and url.netloc == urlsplit(BASE).netloc
                 and not url.query and not url.fragment,
                 "unexpected media origin")
         if rendition:
@@ -108,6 +108,8 @@ def attempt(kind, user, password):
 
 
 def run(viewers, rounds):
+    require(BASE in ("http://127.0.0.1:18000", "http://127.0.0.1:18001"),
+            "unsupported staging port")
     require(os.environ.get("MOOBEE_STAGE_READINESS_ACK") == "isolated",
             "isolated stage acknowledgement missing")
     require(not os.environ.get("MOOBEE_STREAM_SERVICE_KEY"),
