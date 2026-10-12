@@ -16,6 +16,15 @@ VOD_ACTIONS = frozenset({
 })
 router = APIRouter()
 
+# Only simple, local media playlists are supported. Other HLS tags can
+# reference keys, variant playlists, or remote tracks without a segment line.
+SAFE_MANIFEST_TAGS = frozenset({
+    "#EXTM3U", "#EXTINF", "#EXT-X-VERSION", "#EXT-X-TARGETDURATION",
+    "#EXT-X-MEDIA-SEQUENCE", "#EXT-X-PLAYLIST-TYPE", "#EXT-X-ENDLIST",
+    "#EXT-X-INDEPENDENT-SEGMENTS", "#EXT-X-DISCONTINUITY",
+    "#EXT-X-PROGRAM-DATE-TIME", "#EXT-X-ALLOW-CACHE", "#EXT-X-BYTERANGE",
+})
+
 
 def ensure_vod_schema(db):
     db.execute("""CREATE TABLE IF NOT EXISTS vod_movies (
@@ -122,9 +131,15 @@ def manifest(username, password, kind, item_id):
     lines=[]
     for line in file.read_text(encoding="utf-8").splitlines():
         value=line.strip()
-        if value.startswith("#EXT-X-KEY") or value.startswith("#EXT-X-MAP"):
-            raise HTTPException(501,"Encryption and init-map playlists unsupported")
-        if not value or value.startswith("#"):
+        if value.startswith("#"):
+            directive = value.split(":", 1)[0].strip()
+            if ("URI=" in value.upper() or directive.startswith("#EXT-X-KEY")
+                    or directive.startswith("#EXT-X-MAP")):
+                raise HTTPException(501,"HLS directives with external resources or keys unsupported")
+            if directive.startswith("#EXT") and directive not in SAFE_MANIFEST_TAGS:
+                raise HTTPException(422,"Unsupported HLS directive")
+            lines.append(line)
+        elif not value:
             lines.append(line)
         elif SAFE_SEGMENT.fullmatch(value):
             lines.append(f"{main.BASE}/vod-hls/{username}/{password}/{kind}/{item_id}/{value}")
