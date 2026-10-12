@@ -2,7 +2,8 @@ import os, sqlite3, hashlib, hmac, secrets, time, re, html, json
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, HTMLResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, FileResponse, HTMLResponse, Response
+from epg_core import get_mappings, get_epg, render_xmltv
 
 DATA = Path('/data')
 DB = DATA / 'server.sqlite3'
@@ -36,8 +37,8 @@ def channel(stream_id):
     if not row: raise HTTPException(404, 'Unknown stream')
     return row
 
-def stream_data(c):
-    return {'num':c['id'], 'name':c['name'], 'stream_type':'live', 'stream_id':c['id'], 'stream_icon':c['logo'], 'epg_channel_id':'', 'added':'0', 'category_id':c['category'], 'custom_sid':'', 'tv_archive':0, 'direct_source':''}
+def stream_data(c, epg_id=''):
+    return {'num':c['id'], 'name':c['name'], 'stream_type':'live', 'stream_id':c['id'], 'stream_icon':c['logo'], 'epg_channel_id':epg_id, 'added':'0', 'category_id':c['category'], 'custom_sid':'', 'tv_archive':0, 'direct_source':''}
 
 @app.get('/healthz')
 def health(): return {'status':'ok'}
@@ -47,14 +48,19 @@ def home():
     return '<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Private TV</title></head><body style="background:#101827;color:#eff6ff;font:16px system-ui;padding:40px;max-width:660px;margin:auto"><h1>Private TV Server</h1><p>Self-hosted Xtream-compatible API is running.</p><p>Configure your client with this server URL and the credentials created through the server CLI.</p><p>Only authorized media is supported.</p></body></html>'
 
 @app.get('/player_api.php')
-def player_api(request:Request, username:str='', password:str='', action:str='', category_id:str='', stream_id:int=0):
+def player_api(request:Request, username:str='', password:str='', action:str='', category_id:str='', stream_id:int=0, limit:int=10):
     u=auth(username,password)
-    with connect() as db: channels=db.execute('SELECT * FROM channels ORDER BY id').fetchall()
+    with connect() as db:
+        channels=db.execute('SELECT * FROM channels ORDER BY id').fetchall()
+        mappings=get_mappings(db)
     categories=sorted(set(c['category'] for c in channels))
     if action=='get_live_categories': return [{'category_id':x,'category_name':x,'parent_id':0} for x in categories]
-    if action=='get_live_streams': return [stream_data(c) for c in channels if not category_id or c['category']==category_id]
+    if action=='get_live_streams': return [stream_data(c,mappings.get(c['id'],'')) for c in channels if not category_id or c['category']==category_id]
     if action in ('get_vod_categories','get_vod_streams','get_series_categories','get_series'): return []
-    if action in ('get_short_epg','get_simple_data_table'): return {'epg_listings':[]} if action=='get_short_epg' else {'epg_listings':[]}
+    if action in ('get_short_epg','get_simple_data_table'):
+        if stream_id < 1: return {'epg_listings':[]}
+        with connect() as db: listings=get_epg(db,stream_id,limit)
+        return {'epg_listings':listings}
     if action: raise HTTPException(400,'Unsupported API action')
     now=datetime.now(timezone.utc)
     host=request.url.hostname or 'localhost'
@@ -64,18 +70,22 @@ def player_api(request:Request, username:str='', password:str='', action:str='',
 def get_playlist(username:str='', password:str='', type:str='m3u_plus', output:str='m3u8'):
     auth(username,password)
     if output!='m3u8': raise HTTPException(400,'Only HLS/m3u8 output is supported')
-    with connect() as db: channels=db.execute('SELECT * FROM channels ORDER BY id').fetchall()
+    with connect() as db:
+        channels=db.execute('SELECT * FROM channels ORDER BY id').fetchall()
+        mappings=get_mappings(db)
     lines=['#EXTM3U']
     for c in channels:
         safe_name=c['name'].replace('\n',' ')
-        lines.append(f'#EXTINF:-1 tvg-id="" tvg-name="{safe_name}" tvg-logo="{c["logo"]}" group-title="{c["category"]}",{safe_name}')
+        epg_id=mappings.get(c['id'],'')
+        lines.append(f'#EXTINF:-1 tvg-id="{epg_id}" tvg-name="{safe_name}" tvg-logo="{c["logo"]}" group-title="{c["category"]}",{safe_name}')
         lines.append(f'{BASE}/live/{username}/{password}/{c["id"]}.m3u8')
     return '\n'.join(lines)+'\n'
 
-@app.get('/xmltv.php',response_class=PlainTextResponse)
+@app.get('/xmltv.php')
 def xmltv(username:str='',password:str=''):
     auth(username,password)
-    return PlainTextResponse('<?xml version="1.0" encoding="UTF-8"?><tv generator-info-name="PrivateTV"></tv>',media_type='application/xml')
+    with connect() as db: content=render_xmltv(db)
+    return Response(content=content,media_type='application/xml',headers={'Cache-Control':'private, no-store'})
 
 SAFE_SEGMENT=re.compile(r'^[A-Za-z0-9_.-]+\.(ts|m4s|mp4|aac|vtt)$')
 
@@ -123,3 +133,7 @@ app.include_router(admin_router)
 
 from source_management import router as source_management_router
 app.include_router(source_management_router)
+
+# Private XMLTV import/mapping routes. No remote source fetching.
+from admin_epg import router as epg_admin_router
+app.include_router(epg_admin_router)
