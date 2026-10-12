@@ -5,6 +5,7 @@ routing, movie/episode folder paths, or the remote Stream service.
 """
 import sqlite3
 import time
+from contextlib import closing
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ConfigDict
@@ -61,7 +62,7 @@ def import_preview(item: PreviewRequest, actor: str = Depends(guard)):
     # Explicitly read-only: no table creation or journal-mode changes in preview.
     mapped = {}
     if main.DB.is_file():
-        with sqlite3.connect("file:" + str(main.DB) + "?mode=ro", uri=True) as db:
+        with closing(sqlite3.connect("file:" + str(main.DB) + "?mode=ro", uri=True)) as db:
             db.row_factory = sqlite3.Row
             existing_table = db.execute("""SELECT 1 FROM sqlite_master
                 WHERE type='table' AND name='vod_external_sources'""").fetchone()
