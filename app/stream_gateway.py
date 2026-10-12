@@ -7,7 +7,7 @@ remote playlist URI tags, directory traversal or public Stream URLs.
 import os
 import re
 import time
-from urllib.parse import quote
+from hls_access_tokens import issue as issue_access_token, verify as verify_access_token
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -33,7 +33,7 @@ MEDIA_TAGS = frozenset({
     "#EXT-X-PLAYLIST-TYPE", "#EXT-X-INDEPENDENT-SEGMENTS", "#EXTINF",
     "#EXT-X-ENDLIST", "#EXT-X-DISCONTINUITY"
 })
-HEADERS = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+HEADERS = {"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"}
 
 
 def gateway_enabled():
@@ -123,16 +123,15 @@ def _lines(data):
     return lines
 
 
-def rewrite_manifest(data, *, mode, username, password, kind, item_id, rendition=None):
-    """Return only same-server playlist/segment URLs with subscriber credentials."""
+def rewrite_manifest(data, *, mode, token, kind, item_id, rendition=None):
+    """Return only signed-token HLS URLs; never propagate Xtream credentials."""
     import main
     if kind not in ("movie", "episode") or mode not in ("master", "media"):
         raise HTTPException(400, "Invalid HLS mode")
     if mode == "media" and (not rendition or not RENDITION.fullmatch(rendition)):
         raise HTTPException(400, "Invalid HLS rendition")
     tags = MASTER_TAGS if mode == "master" else MEDIA_TAGS
-    prefix = (f"{main.BASE}/stream-vod/{quote(username,safe='')}/"
-              f"{quote(password,safe='')}/{kind}/{item_id}")
+    prefix = f"{main.BASE}/stream-vod-t/{token}/{kind}/{item_id}"
     rewritten, entries = [], 0
     for raw in _lines(data):
         line = raw.strip()
@@ -170,32 +169,42 @@ def _resolve(username, password, kind, item_id):
     return video_id
 
 
-def manifest(username, password, kind, item_id, *, rendition=None):
+def manifest(username, password, kind, item_id):
+    import main
     video_id = _resolve(username, password, kind, item_id)
+    token = issue_access_token(main.auth(username, password), kind, item_id, video_id)
     origin, key = configured_client()
     with _client() as client:
         signed = _signed_media(client, origin, key, video_id)
-        asset = "master.m3u8" if rendition is None else f"{rendition}/index.m3u8"
+        asset = "master.m3u8"
         data = _binary(client, origin, signed, asset, max_bytes=MAX_MANIFEST)
     body = rewrite_manifest(
-        data, mode="master" if rendition is None else "media",
-        username=username, password=password, kind=kind, item_id=item_id,
-        rendition=rendition
+        data, mode="master", token=token, kind=kind, item_id=item_id
     )
     return PlainTextResponse(
         body, media_type="application/vnd.apple.mpegurl", headers=HEADERS)
 
 
-@router.get("/stream-vod/{username}/{password}/{kind}/{item_id}/{rendition}/index.m3u8")
-def rendition_manifest(username: str, password: str, kind: str, item_id: int,
-                       rendition: str):
-    return manifest(username, password, kind, item_id, rendition=rendition)
+@router.get("/stream-vod-t/{token}/{kind}/{item_id}/{rendition}/index.m3u8")
+def rendition_manifest(token: str, kind: str, item_id: int, rendition: str):
+    video_id = verify_access_token(token, kind, item_id)
+    if not RENDITION.fullmatch(rendition):
+        raise HTTPException(400, "Invalid HLS rendition")
+    origin, key = configured_client()
+    with _client() as client:
+        signed = _signed_media(client, origin, key, video_id)
+        data = _binary(client, origin, signed, f"{rendition}/index.m3u8",
+                       max_bytes=MAX_MANIFEST)
+    body = rewrite_manifest(data, mode="media", token=token,
+                            kind=kind, item_id=item_id, rendition=rendition)
+    return PlainTextResponse(
+        body, media_type="application/vnd.apple.mpegurl", headers=HEADERS)
 
 
-@router.get("/stream-vod/{username}/{password}/{kind}/{item_id}/{rendition}/{segment}")
-def proxy_segment(username: str, password: str, kind: str, item_id: int,
+@router.get("/stream-vod-t/{token}/{kind}/{item_id}/{rendition}/{segment}")
+def proxy_segment(token: str, kind: str, item_id: int,
                   rendition: str, segment: str):
-    video_id = _resolve(username, password, kind, item_id)
+    video_id = verify_access_token(token, kind, item_id)
     if not RENDITION.fullmatch(rendition) or not SEGMENT.fullmatch(segment):
         raise HTTPException(400, "Invalid media filename")
     origin, key = configured_client()
