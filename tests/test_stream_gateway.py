@@ -239,6 +239,10 @@ def test_disable_user_password_reset_mapping_removal_all_revoke_segments(stage):
     assert len(calls) == before
     assert c.patch("/admin/api/users/streamviewer", auth=ADMIN,
                    json={"disabled": False}).status_code == 200
+    # Disabling permanently revokes the old token even after account re-enable.
+    assert c.get(movie_segment).status_code == 401
+    _, renewed_movie_segment = token_paths(c, "movie", 101)
+    assert c.get(renewed_movie_segment).status_code == 200
     with main.connect() as db:
         db.execute("UPDATE users SET salt=?,password_hash=? WHERE username=?",
                    ("ab" * 16, "cd" * 64, VIEWER["username"]))
@@ -332,3 +336,61 @@ def test_upstream_expiry_segment_size_limit_and_flag_disabled(stage):
     m.setenv("MOOBEE_STREAM_ENABLED", "false")
     assert c.get(segment).status_code == 404
     assert "segment001.ts" in initial(c, "movie", 101).text
+
+
+def test_direct_sql_account_disable_reenable_cannot_reactivate_token(stage):
+    # Matches the standalone Phase 13 validator, which updates the staging DB.
+    c, m = stage
+    configure(m)
+    stage_mock(m)
+    make_mapping(c, "movie", 101, MOVIE)
+    _, old_segment = token_paths(c, "movie", 101)
+    with main.connect() as db:
+        previous = db.execute(
+            "SELECT token_generation FROM users WHERE username=?",
+            (VIEWER["username"],)
+        ).fetchone()["token_generation"]
+        db.execute("UPDATE users SET disabled=1 WHERE username=?",
+                   (VIEWER["username"],))
+        db.commit()
+    assert c.get(old_segment).status_code == 401
+    with main.connect() as db:
+        revoked = db.execute(
+            "SELECT token_generation FROM users WHERE username=?",
+            (VIEWER["username"],)
+        ).fetchone()["token_generation"]
+        assert revoked == previous + 1
+        db.execute("UPDATE users SET disabled=0 WHERE username=?",
+                   (VIEWER["username"],))
+        db.commit()
+    assert c.get(old_segment).status_code == 401
+    _, fresh_segment = token_paths(c, "movie", 101)
+    assert c.get(fresh_segment).status_code == 200
+
+
+def test_legacy_users_table_is_upgraded_without_losing_credentials(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setattr(main, "DATA", tmp_path)
+    monkeypatch.setattr(main, "DB", tmp_path / "legacy.sqlite3")
+    salt = "ab" * 16
+    password = "test-legacy-password-0123456789"
+    with sqlite3.connect(main.DB) as db:
+        db.execute("""CREATE TABLE users (
+            username TEXT PRIMARY KEY, salt TEXT NOT NULL,
+            password_hash TEXT NOT NULL, created_at INTEGER NOT NULL,
+            disabled INTEGER NOT NULL DEFAULT 0)""")
+        db.execute("INSERT INTO users VALUES (?,?,?,?,0)",
+                   ("legacyuser", salt, main.digest(password, salt), 123456))
+        db.commit()
+    with main.connect() as db:
+        row = db.execute("SELECT token_generation,disabled FROM users WHERE username=?",
+                         ("legacyuser",)).fetchone()
+        assert row["token_generation"] == 0 and row["disabled"] == 0
+        db.execute("UPDATE users SET disabled=1 WHERE username=?", ("legacyuser",))
+        db.execute("UPDATE users SET disabled=0 WHERE username=?", ("legacyuser",))
+        db.commit()
+    with main.connect() as db:
+        row = db.execute("SELECT token_generation FROM users WHERE username=?",
+                         ("legacyuser",)).fetchone()
+        assert row["token_generation"] == 1
+    assert main.auth("legacyuser", password)["username"] == "legacyuser"
