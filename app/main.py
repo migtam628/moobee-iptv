@@ -18,8 +18,26 @@ def connect():
     db = sqlite3.connect(DB, timeout=10)
     db.row_factory = sqlite3.Row
     db.execute('PRAGMA journal_mode=WAL')
-    db.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, salt TEXT NOT NULL, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL, disabled INTEGER NOT NULL DEFAULT 0)')
+    db.execute('CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, salt TEXT NOT NULL, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL, disabled INTEGER NOT NULL DEFAULT 0, token_generation INTEGER NOT NULL DEFAULT 0)')
     db.execute('CREATE TABLE IF NOT EXISTS channels (id INTEGER PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL, folder TEXT NOT NULL, logo TEXT NOT NULL DEFAULT "")')
+    # Additive upgrade for existing subscriber databases. Avoid resetting passwords.
+    columns = {row['name'] for row in db.execute('PRAGMA table_info(users)')}
+    if 'token_generation' not in columns:
+        try:
+            db.execute('ALTER TABLE users ADD COLUMN token_generation INTEGER NOT NULL DEFAULT 0')
+        except sqlite3.OperationalError as exc:
+            # A concurrent request may have completed this one-time migration.
+            if 'duplicate column name' not in str(exc).lower():
+                raise
+    # Database-level trigger covers admin UI, CLI, and direct SQL account disables.
+    # Re-enabling never decrements the generation or revives old bearer tokens.
+    db.execute('''CREATE TRIGGER IF NOT EXISTS users_invalidate_hls_tokens_on_disable
+        AFTER UPDATE OF disabled ON users
+        FOR EACH ROW WHEN NEW.disabled = 1 AND OLD.disabled = 0
+        BEGIN
+            UPDATE users SET token_generation = token_generation + 1
+             WHERE username = NEW.username;
+        END''')
     return db
 
 def digest(password, salt):
