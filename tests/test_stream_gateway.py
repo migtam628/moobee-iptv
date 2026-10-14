@@ -394,3 +394,17 @@ def test_legacy_users_table_is_upgraded_without_losing_credentials(tmp_path, mon
                          ("legacyuser",)).fetchone()
         assert row["token_generation"] == 1
     assert main.auth("legacyuser", password)["username"] == "legacyuser"
+
+
+def test_hls_renewal_hint_is_opt_in_and_authenticated(stage):
+    c, m = stage
+    uri = "/player_api.php"
+    p = {"username": VIEWER["username"], "password": VIEWER["password"]}
+    assert "moobee_hls_refresh_after_seconds" not in c.get(uri, params=p).json()["user_info"]
+    configure(m)
+    enabled = c.get(uri, params=p)
+    assert enabled.status_code == 200
+    assert enabled.json()["user_info"]["moobee_hls_refresh_after_seconds"] == 10800
+    assert c.get(uri, params={"username": VIEWER["username"], "password": "wrong"}).status_code == 401
+    m.setenv("MOOBEE_STREAM_PLAYBACK_ENABLED", "false")
+    assert "moobee_hls_refresh_after_seconds" not in c.get(uri, params=p).json()["user_info"]
