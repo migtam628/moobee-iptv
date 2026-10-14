@@ -45,3 +45,28 @@ A database restore from *before* a revocation can also restore an older generati
 - Replayable bearer-token URLs require log/path redaction and HTTPS in production.
 - Real StreamBoss macOS seek/reconnect/regression after code change.
 - No production merge/deployment until isolated staging checks, security review and CI are green.
+
+## CI-budget blocked: isolated local test procedure
+
+On 2026-10-14, GitHub Actions run 38518298763 **did not start**:
+`The job was not started because an Actions budget is preventing further use.`
+This does not indicate failed application tests. The first manual Docker test attempt
+was interrupted at collection because only `tests/` was mounted while
+`tests/test_staging_readiness.py` imports `scripts/staging_gateway_readiness.py`.
+
+Run instead from the isolated test checkout (not from production or running stage):
+```bash
+cd /opt/moobee-iptv-revocation-test
+git fetch origin
+git status --short
+# Switch only if the worktree is clean; preserve uncommitted local changes.
+git pull --ff-only
+bash scripts/test-local-isolated.sh
+```
+This helper builds a separate test image, installs pytest at build time,
+then runs **all** tests in a network-isolated, read-only container with the
+`tests/` and `scripts/` directories mounted read-only. It opens no ports,
+does not use running containers, and does not touch production or staging
+SQLite state. Do not claim success until the terminal prints the final
+`PASS: all isolated tests passed`. Once the Actions budget is restored,
+rerun normal GitHub CI separately before merge.
