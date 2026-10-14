@@ -86,7 +86,12 @@ def player_api(request:Request, username:str='', password:str='', action:str='',
     if action: raise HTTPException(400,'Unsupported API action')
     now=datetime.now(timezone.utc)
     host=request.url.hostname or 'localhost'
-    return {'user_info':{'username':username,'password':password,'message':'Private TV','auth':1,'status':'Active','exp_date':None,'is_trial':'0','active_cons':'0','created_at':str(u['created_at']),'max_connections':'1','allowed_output_formats':['m3u8']},'server_info':{'url':host,'port':'443','https_port':'443','server_protocol':'https','rtmp_port':'0','timezone':'UTC','timestamp_now':int(time.time()),'time_now':now.strftime('%Y-%m-%d %H:%M:%S')}}
+    # Opt-in protocol hint: StreamBoss can re-open the authenticated VOD entry
+    # before its 4-hour signed HLS child URLs expire. Do not advertise this
+    # for disabled/ordinary Xtream integrations.
+    from stream_gateway import gateway_enabled
+    renewal_hint = {'moobee_hls_refresh_after_seconds': 10800} if gateway_enabled() else {}
+    return {'user_info':{**renewal_hint,'username':username,'password':password,'message':'Private TV','auth':1,'status':'Active','exp_date':None,'is_trial':'0','active_cons':'0','created_at':str(u['created_at']),'max_connections':'1','allowed_output_formats':['m3u8']},'server_info':{'url':host,'port':'443','https_port':'443','server_protocol':'https','rtmp_port':'0','timezone':'UTC','timestamp_now':int(time.time()),'time_now':now.strftime('%Y-%m-%d %H:%M:%S')}}
 
 @app.get('/get.php', response_class=PlainTextResponse)
 def get_playlist(username:str='', password:str='', type:str='m3u_plus', output:str='m3u8'):
