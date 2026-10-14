@@ -50,8 +50,12 @@ def _binding(row, key):
     # Account-derived, keyed fingerprint binds tokens to a specific generation
     # of the subscriber credentials. A password reset or delete/re-create
     # (new salt) revokes previously issued tokens.
-    material = ("account-v1|" + row["username"] + "|" + row["salt"] +
-                "|" + row["password_hash"] + "|" + str(row["created_at"]))
+    # The persisted generation is incremented by a SQLite trigger whenever
+    # an account transitions into the disabled state. Old tokens stay revoked
+    # after re-enable, regardless of token expiry or password reuse.
+    material = ("account-v2|" + row["username"] + "|" + row["salt"] +
+                "|" + row["password_hash"] + "|" + str(row["created_at"]) +
+                "|" + str(row["token_generation"]))
     return _b64(hmac.digest(key, material.encode("utf-8"), "sha256")[:16])
 
 
@@ -124,7 +128,7 @@ def verify(token, kind, item_id):
 
     with main.connect() as db:
         row = db.execute(
-            "SELECT username,salt,password_hash,created_at,disabled"
+            "SELECT username,salt,password_hash,created_at,disabled,token_generation"
             " FROM users WHERE username=?", (claims["u"],)
         ).fetchone()
     if row is None or row["disabled"]:
